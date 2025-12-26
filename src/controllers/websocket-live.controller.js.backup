@@ -1,0 +1,287 @@
+import GeminiLiveService from '../services/gemini-live.service.js';
+import { buildSystemInstruction, getGreeting } from '../config/prompts.js';
+import { getClientIP, getSessionInfo } from '../middleware/security.middleware.js';
+
+class WebSocketLiveController {
+  constructor(apiKey) {
+    this.apiKey = apiKey;
+    this.activeSessions = new Map(); // Store active sessions
+  }
+
+  handleConnection(ws, req) {
+    const ip = getClientIP(req);
+    const sessionInfo = getSessionInfo(req);
+    
+    // Generate sessionId if not provided
+    const sessionId = sessionInfo.sessionId || this.generateSessionId();
+    const userId = sessionInfo.userId || 'anonymous';
+    
+    console.log(`🔌 WebSocket connected:`, {
+      userId,
+      sessionId,
+      examId: sessionInfo.examId,
+      ip
+    });
+    
+    // Create session object
+    const session = {
+      sessionId,
+      userId,
+      examId: sessionInfo.examId,
+      ip,
+      ws,
+      liveService: null,
+      startTime: Date.now(),
+      lastActivity: Date.now(),
+      stats: {
+        audioChunksSent: 0,
+        audioChunksReceived: 0,
+        messagesSent: 0,
+        messagesReceived: 0
+      },
+      studentInfo: null,
+      examData: null
+    };
+    
+    // Store session
+    this.activeSessions.set(sessionId, session);
+    
+    // Send session info to client
+    ws.send(JSON.stringify({
+      type: 'session_info',
+      sessionId,
+      userId,
+      timestamp: Date.now()
+    }));
+
+    ws.on('message', async (message) => {
+      try {
+        const session = this.activeSessions.get(sessionId);
+        if (!session) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Session not found' }));
+          return;
+        }
+        
+        session.lastActivity = Date.now();
+        session.stats.messagesReceived++;
+        
+        const data = JSON.parse(message);
+        
+        // Add session info to data
+        data.sessionId = sessionId;
+        data.userId = userId;
+
+        switch (data.type) {
+          case 'init':
+            await this.handleInit(session, data);
+            break;
+
+          case 'start_stream':
+            await this.handleStartStream(session, data);
+            break;
+
+          case 'audio_chunk':
+            session.stats.audioChunksReceived++;
+            await this.handleAudioChunk(session, data);
+            break;
+
+          case 'end_stream':
+            await this.handleEndStream(session, data);
+            break;
+
+          case 'text':
+            await this.handleText(session, data);
+            break;
+
+          case 'stop':
+            await this.handleStop(session);
+            break;
+
+          default:
+            console.warn(`⚠️ Unknown message type: ${data.type} from session ${sessionId}`);
+        }
+        
+        session.stats.messagesSent++;
+        
+      } catch (error) {
+        console.error(`❌ Error handling message for session ${sessionId}:`, error);
+        ws.send(JSON.stringify({
+          type: 'error',
+          message: error.message,
+          sessionId
+        }));
+      }
+    });
+
+    ws.on('close', () => {
+      this.handleDisconnect(sessionId);
+      console.log('🔌 Client disconnected');
+      liveService.close();
+    });
+
+    ws.on('error', (error) => {
+      console.error('❌ WebSocket error:', error);
+    });
+  }
+
+  async handleInit(ws, liveService, config = {}) {
+    try {
+      const {
+        voiceName = 'Kore',
+        promptType = 'BASIC_CONVERSATION',
+        topic = null,
+        level = 'intermediate',
+        focusAreas = []
+      } = config;
+
+      // Build system instruction based on prompt type
+      const systemInstruction = buildSystemInstruction(promptType, {
+        topic,
+        level,
+        focusAreas
+      });
+
+      const greeting = getGreeting(promptType);
+      
+      await liveService.connect({
+        onopen: () => {
+          ws.send(JSON.stringify({
+            type: 'ready',
+            message: `Connected! Voice: ${voiceName} 🎤`,
+            voiceName: voiceName,
+            promptType: promptType,
+            level: level
+          }));
+          console.log(`✅ Gemini Live initialized - Voice: ${voiceName}, Prompt: ${promptType}, Level: ${level}`);
+          
+          // Don't send greeting automatically - wait for user to start streaming
+        },
+        onmessage: (message) => {
+          if (message.serverContent) {
+            const parts = message.serverContent.modelTurn?.parts || [];
+            
+            parts.forEach(part => {
+              if (part.text) {
+                ws.send(JSON.stringify({
+                  type: 'text_response',
+                  text: part.text
+                }));
+              }
+              
+              if (part.inlineData && part.inlineData.mimeType.startsWith('audio/')) {
+                console.log('🔊 Sending audio response to client:', {
+                  mimeType: part.inlineData.mimeType,
+                  dataLength: part.inlineData.data?.length || 0,
+                  dataSample: part.inlineData.data?.substring(0, 50) || 'empty'
+                });
+                
+                ws.send(JSON.stringify({
+                  type: 'audio_response',
+                  audio: part.inlineData.data,
+                  mimeType: part.inlineData.mimeType
+                }));
+              }
+            });
+
+            if (message.serverContent.turnComplete) {
+              ws.send(JSON.stringify({
+                type: 'turn_complete'
+              }));
+            }
+
+            if (message.serverContent.interrupted) {
+              ws.send(JSON.stringify({
+                type: 'interrupted',
+                message: 'Model was interrupted'
+              }));
+            }
+          }
+        },
+        onerror: (error) => {
+          ws.send(JSON.stringify({
+            type: 'error',
+            message: error.message
+          }));
+        },
+        onclose: (event) => {
+          ws.send(JSON.stringify({
+            type: 'session_closed',
+            reason: event.reason
+          }));
+        }
+      }, {
+        voiceName,
+        systemInstruction,
+        topic,
+        level
+      });
+      
+      return greeting;
+    } catch (error) {
+      console.error('❌ Failed to initialize Live API:', error);
+      ws.send(JSON.stringify({
+        type: 'error',
+        message: 'Failed to connect to Gemini Live API: ' + error.message
+      }));
+      return null;
+    }
+  }
+
+  async handleAudioChunk(ws, liveService, data) {
+    try {
+      if (!data.audio) {
+        console.error('❌ No audio data in chunk');
+        return;
+      }
+      await liveService.sendRealtimeInput(data.audio);
+    } catch (error) {
+      console.error('❌ Error sending audio chunk:', error.message);
+      ws.send(JSON.stringify({
+        type: 'error',
+        message: error.message
+      }));
+    }
+  }
+
+  async handleEndStream(ws, liveService) {
+    console.log('🎙️ Ending audio stream');
+    try {
+      await liveService.endAudioStream();
+      ws.send(JSON.stringify({
+        type: 'stream_ended',
+        message: 'Audio stream ended'
+      }));
+    } catch (error) {
+      console.error('❌ Error ending stream:', error);
+      ws.send(JSON.stringify({
+        type: 'error',
+        message: error.message
+      }));
+    }
+  }
+
+  async handleText(ws, liveService, data) {
+    console.log('💬 Processing text via Live API:', data.text);
+    
+    try {
+      await liveService.sendText(data.text);
+      console.log('✅ Text sent to Live API');
+    } catch (error) {
+      console.error('❌ Error sending text:', error);
+      ws.send(JSON.stringify({
+        type: 'error',
+        message: error.message
+      }));
+    }
+  }
+
+  handleStop(ws, liveService) {
+    console.log('⏹️ Stopping Live API session');
+    liveService.close();
+    ws.send(JSON.stringify({
+      type: 'stopped'
+    }));
+  }
+}
+
+export default WebSocketLiveController;

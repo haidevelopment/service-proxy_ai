@@ -1,0 +1,28 @@
+{
+  "name": "gemini-live-native-audio",
+  "version": "1.0.0",
+  "description": "Professional Gemini Live Native Audio - Real-time voice conversation demo",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "keywords": [
+    "gemini",
+    "live",
+    "native-audio",
+    "websocket",
+    "streaming",
+    "voice-ai"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@google/generative-ai": "^0.21.0",
+    "@google/genai": "^0.3.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.18.2",
+    "ws": "^8.16.0"
+  }
+}

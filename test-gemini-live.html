@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gemini Live Audio Test</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            max-width: 600px;
+            width: 100%;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+
+        h1 {
+            text-align: center;
+            color: #667eea;
+            margin-bottom: 30px;
+            font-size: 28px;
+        }
+
+        .status {
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            text-align: center;
+            font-weight: 600;
+        }
+
+        .status.disconnected {
+            background: #fee;
+            color: #c33;
+        }
+
+        .status.connected {
+            background: #efe;
+            color: #3c3;
+        }
+
+        .status.streaming {
+            background: #fef3cd;
+            color: #856404;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        button {
+            flex: 1;
+            padding: 15px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-connect {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-connect:hover:not(:disabled) {
+            background: #5568d3;
+        }
+
+        .btn-record {
+            background: #f56565;
+            color: white;
+        }
+
+        .btn-record:hover:not(:disabled) {
+            background: #e53e3e;
+        }
+
+        .btn-record.recording {
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
+        .btn-stop {
+            background: #ed8936;
+            color: white;
+        }
+
+        .btn-stop:hover:not(:disabled) {
+            background: #dd6b20;
+        }
+
+        .log {
+            background: #f7fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 10px;
+            padding: 15px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+
+        .log-entry {
+            padding: 5px;
+            margin-bottom: 5px;
+            border-left: 3px solid #cbd5e0;
+            padding-left: 10px;
+        }
+
+        .log-entry.info {
+            border-left-color: #4299e1;
+            color: #2c5282;
+        }
+
+        .log-entry.success {
+            border-left-color: #48bb78;
+            color: #22543d;
+        }
+
+        .log-entry.error {
+            border-left-color: #f56565;
+            color: #742a2a;
+        }
+
+        .log-entry.ai {
+            border-left-color: #9f7aea;
+            color: #44337a;
+            font-weight: 600;
+        }
+
+        .config {
+            background: #edf2f7;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+
+        .config label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #2d3748;
+        }
+
+        .config input, .config select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #cbd5e0;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+
+        .config-row {
+            margin-bottom: 15px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎤 Gemini Live Audio Test</h1>
+        
+        <div id="status" class="status disconnected">
+            ⚫ Disconnected
+        </div>
+
+        <div class="config">
+            <div class="config-row">
+                <label>API Key:</label>
+                <input type="text" id="apiKey" value="15ef2d950a5e69ea30231aefbb850476c94bc0ba3e816005bfb90813b509c09a" placeholder="Enter API Key">
+            </div>
+            <div class="config-row">
+                <label>Server URL:</label>
+                <input type="text" id="serverUrl" value="ws://localhost:3001" placeholder="ws://localhost:3001">
+            </div>
+            <div class="config-row">
+                <label>Voice:</label>
+                <select id="voiceName">
+                    <option value="Kore">Kore</option>
+                    <option value="Puck">Puck</option>
+                    <option value="Charon">Charon</option>
+                    <option value="Aoede">Aoede</option>
+                </select>
+            </div>
+            <div class="config-row" style="background: #f0f0f0; padding: 10px; border-radius: 5px; font-size: 12px;">
+                <strong>Session Info:</strong><br>
+                <span id="sessionInfo" style="color: #666;">Not connected</span>
+            </div>
+        </div>
+
+        <div class="controls">
+            <button class="btn-connect" id="btnConnect">Connect</button>
+            <button class="btn-record" id="btnRecord" disabled>Start Recording</button>
+            <button class="btn-stop" id="btnStop" disabled>Stop</button>
+        </div>
+
+        <div class="log" id="log"></div>
+    </div>
+
+    <script>
+        let ws = null;
+        let mediaRecorder = null;
+        let audioContext = null;
+        let isConnected = false;
+        let isStreaming = false;
+        let audioQueue = [];
+        let isPlayingAudio = false;
+        let sessionId = null;
+        let userId = 'user_' + Math.random().toString(36).substr(2, 9);
+
+        const statusEl = document.getElementById('status');
+        const logEl = document.getElementById('log');
+        const btnConnect = document.getElementById('btnConnect');
+        const btnRecord = document.getElementById('btnRecord');
+        const btnStop = document.getElementById('btnStop');
+        const apiKeyInput = document.getElementById('apiKey');
+        const serverUrlInput = document.getElementById('serverUrl');
+        const voiceNameSelect = document.getElementById('voiceName');
+
+        function log(message, type = 'info') {
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logEl.appendChild(entry);
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+
+        function updateStatus(status, text) {
+            statusEl.className = `status ${status}`;
+            statusEl.textContent = text;
+        }
+
+        function connectWebSocket() {
+            const apiKey = apiKeyInput.value.trim();
+            const serverUrl = serverUrlInput.value.trim();
+
+            if (!apiKey) {
+                log('Please enter API Key', 'error');
+                return;
+            }
+
+            // Generate sessionId if not exists
+            if (!sessionId) {
+                sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+            }
+
+            log(`Connecting to server... (User: ${userId}, Session: ${sessionId})`, 'info');
+            
+            // Create WebSocket connection with API key, userId, and sessionId
+            const wsUrl = `${serverUrl}?apiKey=${apiKey}&userId=${userId}&sessionId=${sessionId}`;
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                log('✅ WebSocket connected', 'success');
+                updateStatus('connected', '🟢 Connected');
+                isConnected = true;
+                btnConnect.textContent = 'Disconnect';
+                btnRecord.disabled = false;
+
+                // Initialize Gemini Live session
+                const initMessage = {
+                    type: 'init',
+                    voiceName: voiceNameSelect.value,
+                    promptType: 'BASIC_CONVERSATION'
+                };
+                ws.send(JSON.stringify(initMessage));
+                log('Initializing Gemini Live...', 'info');
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    
+                    switch(data.type) {
+                        case 'session_info':
+                            log(`📋 Session Info - ID: ${data.sessionId}, User: ${data.userId}`, 'info');
+                            sessionId = data.sessionId;
+                            userId = data.userId;
+                            document.getElementById('sessionInfo').innerHTML = 
+                                `User ID: <strong>${userId}</strong><br>Session ID: <strong>${sessionId}</strong>`;
+                            break;
+                            
+                        case 'ready':
+                            log(`✅ Gemini Live ready - Voice: ${data.voiceName}`, 'success');
+                            break;
+                        
+                        case 'text_response':
+                            log(`🤖 AI: ${data.text}`, 'ai');
+                            break;
+                        
+                        case 'audio_response':
+                            log('🔊 Received audio response', 'success');
+                            playAudioResponse(data.audio, data.mimeType);
+                            break;
+                        
+                        case 'turn_complete':
+                            log('✅ Turn complete', 'success');
+                            break;
+                        
+                        case 'streaming_started':
+                            log('🎙️ Streaming started', 'success');
+                            break;
+                        
+                        case 'stream_ended':
+                            log('⏹️ Stream ended', 'info');
+                            break;
+                        
+                        case 'error':
+                            log(`❌ Error: ${data.message}`, 'error');
+                            break;
+                        
+                        default:
+                            log(`Received: ${data.type}`, 'info');
+                    }
+                } catch (error) {
+                    log(`Parse error: ${error.message}`, 'error');
+                }
+            };
+
+            ws.onerror = (error) => {
+                log(`❌ WebSocket error: ${error.message || 'Connection failed'}`, 'error');
+            };
+
+            ws.onclose = () => {
+                log('WebSocket disconnected', 'info');
+                updateStatus('disconnected', '⚫ Disconnected');
+                isConnected = false;
+                isStreaming = false;
+                btnConnect.textContent = 'Connect';
+                btnRecord.disabled = true;
+                btnRecord.textContent = 'Start Recording';
+                btnRecord.classList.remove('recording');
+                btnStop.disabled = true;
+            };
+        }
+
+        function disconnectWebSocket() {
+            if (ws) {
+                ws.send(JSON.stringify({ type: 'stop' }));
+                ws.close();
+                ws = null;
+            }
+            
+            // Clear audio queue
+            audioQueue = [];
+            isPlayingAudio = false;
+            
+            if (audioContext) {
+                audioContext.close();
+                audioContext = null;
+            }
+        }
+
+        async function startRecording() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: {
+                        channelCount: 1,
+                        sampleRate: 16000
+                    } 
+                });
+                
+                log('🎤 Microphone access granted', 'success');
+                
+                // Send start_stream message
+                ws.send(JSON.stringify({ type: 'start_stream' }));
+                
+                // Setup audio context for processing
+                audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+                const source = audioContext.createMediaStreamSource(stream);
+                const processor = audioContext.createScriptProcessor(4096, 1, 1);
+                
+                processor.onaudioprocess = (e) => {
+                    if (!isStreaming) return;
+                    
+                    const inputData = e.inputBuffer.getChannelData(0);
+                    const pcm16 = new Int16Array(inputData.length);
+                    
+                    for (let i = 0; i < inputData.length; i++) {
+                        const s = Math.max(-1, Math.min(1, inputData[i]));
+                        pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                    }
+                    
+                    const base64Audio = arrayBufferToBase64(pcm16.buffer);
+                    
+                    ws.send(JSON.stringify({
+                        type: 'audio_chunk',
+                        audio: {
+                            data: base64Audio,
+                            mimeType: 'audio/pcm;rate=16000'
+                        }
+                    }));
+                };
+                
+                source.connect(processor);
+                processor.connect(audioContext.destination);
+                
+                mediaRecorder = { stream, processor, source };
+                isStreaming = true;
+                
+                updateStatus('streaming', '🔴 Recording...');
+                btnRecord.textContent = 'Recording...';
+                btnRecord.classList.add('recording');
+                btnRecord.disabled = true;
+                btnStop.disabled = false;
+                
+                log('🎙️ Recording started', 'success');
+                
+            } catch (error) {
+                log(`❌ Microphone error: ${error.message}`, 'error');
+            }
+        }
+
+        function stopRecording() {
+            if (mediaRecorder) {
+                mediaRecorder.stream.getTracks().forEach(track => track.stop());
+                mediaRecorder.processor.disconnect();
+                mediaRecorder.source.disconnect();
+                mediaRecorder = null;
+            }
+            
+            if (audioContext) {
+                audioContext.close();
+                audioContext = null;
+            }
+            
+            isStreaming = false;
+            
+            // Send end_stream message
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'end_stream' }));
+            }
+            
+            updateStatus('connected', '🟢 Connected');
+            btnRecord.textContent = 'Start Recording';
+            btnRecord.classList.remove('recording');
+            btnRecord.disabled = false;
+            btnStop.disabled = true;
+            
+            log('⏹️ Recording stopped', 'info');
+        }
+
+        async function playAudioResponse(base64Audio, mimeType) {
+            try {
+                if (!base64Audio || base64Audio.length === 0) {
+                    log('❌ Empty audio data', 'error');
+                    return;
+                }
+
+                if (!audioContext) {
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)({
+                        sampleRate: 24000
+                    });
+                    log('✅ Audio context created: 24kHz', 'success');
+                }
+
+                // Decode base64 to binary
+                const binaryString = atob(base64Audio);
+                const bytes = new Uint8Array(binaryString.length);
+                for (let i = 0; i < binaryString.length; i++) {
+                    bytes[i] = binaryString.charCodeAt(i);
+                }
+                
+                // Convert PCM16 to Float32
+                const int16Array = new Int16Array(bytes.buffer);
+                const float32Array = new Float32Array(int16Array.length);
+                for (let i = 0; i < int16Array.length; i++) {
+                    float32Array[i] = int16Array[i] / 32768;
+                }
+                
+                // Create audio buffer
+                const audioBuffer = audioContext.createBuffer(1, float32Array.length, 24000);
+                audioBuffer.getChannelData(0).set(float32Array);
+                
+                log(`📋 Queued audio: ${audioBuffer.duration.toFixed(2)}s (queue: ${audioQueue.length + 1})`, 'info');
+                
+                // Add to queue
+                audioQueue.push(audioBuffer);
+                
+                // Start playing if not already playing
+                if (!isPlayingAudio) {
+                    playNextAudio();
+                }
+                
+            } catch (error) {
+                log(`❌ Audio error: ${error.message}`, 'error');
+                console.error('Full error:', error);
+            }
+        }
+
+        function playNextAudio() {
+            if (audioQueue.length === 0) {
+                isPlayingAudio = false;
+                log('⏹️ Audio queue empty', 'info');
+                return;
+            }
+
+            isPlayingAudio = true;
+            const audioBuffer = audioQueue.shift();
+            
+            log(`▶️ Playing audio: ${audioBuffer.duration.toFixed(2)}s (remaining: ${audioQueue.length})`, 'success');
+            
+            const source = audioContext.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(audioContext.destination);
+            
+            source.onended = () => {
+                log('✅ Audio chunk finished', 'success');
+                // Play next audio in queue
+                playNextAudio();
+            };
+            
+            try {
+                source.start(0);
+            } catch (error) {
+                log(`❌ Playback error: ${error.message}`, 'error');
+                // Try next audio
+                playNextAudio();
+            }
+        }
+
+        function arrayBufferToBase64(buffer) {
+            const bytes = new Uint8Array(buffer);
+            let binary = '';
+            for (let i = 0; i < bytes.byteLength; i++) {
+                binary += String.fromCharCode(bytes[i]);
+            }
+            return btoa(binary);
+        }
+
+        // Event listeners
+        btnConnect.addEventListener('click', () => {
+            if (isConnected) {
+                disconnectWebSocket();
+            } else {
+                connectWebSocket();
+            }
+        });
+
+        btnRecord.addEventListener('click', startRecording);
+        btnStop.addEventListener('click', stopRecording);
+
+        // Initial log
+        log('Ready to connect', 'info');
+    </script>
+</body>
+</html>
