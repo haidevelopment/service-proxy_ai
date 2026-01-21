@@ -25,7 +25,9 @@ class GeminiLiveService {
               voiceName: voiceName
             }
           }
-        }
+        },
+        inputAudioTranscription: true,
+        outputAudioTranscription: true
       };
 
       // Add system instruction if provided
@@ -71,7 +73,6 @@ class GeminiLiveService {
       // audioBlob should be { data: base64String, mimeType: 'audio/pcm;rate=16000' }
       if (typeof audioBlob === 'string') {
         // If just base64 string, wrap it
-        console.log('🎵 Sending audio chunk (string format)');
         await this.session.sendRealtimeInput({
           media: {
             mimeType: 'audio/pcm;rate=16000',
@@ -80,7 +81,6 @@ class GeminiLiveService {
         });
       } else if (audioBlob && audioBlob.data && audioBlob.mimeType) {
         // If already a blob object
-        console.log('🎵 Sending audio chunk (blob format)');
         await this.session.sendRealtimeInput({
           media: audioBlob
         });

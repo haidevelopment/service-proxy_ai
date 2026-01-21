@@ -161,6 +161,24 @@ class WebSocketLiveController {
           if (message.serverContent) {
             const parts = message.serverContent.modelTurn?.parts || [];
             
+            if (message.serverContent.inputTranscription?.text) {
+              ws.send(JSON.stringify({
+                type: 'user_transcript',
+                text: message.serverContent.inputTranscription.text,
+                sessionId: session.sessionId,
+                userId: session.userId
+              }));
+            }
+
+            if (message.serverContent.outputTranscription?.text) {
+              ws.send(JSON.stringify({
+                type: 'text_response',
+                text: message.serverContent.outputTranscription.text,
+                sessionId: session.sessionId,
+                userId: session.userId
+              }));
+            }
+            
             parts.forEach(part => {
               if (part.text) {
                 ws.send(JSON.stringify({
@@ -173,10 +191,6 @@ class WebSocketLiveController {
               
               if (part.inlineData && part.inlineData.mimeType.startsWith('audio/')) {
                 session.stats.audioChunksSent++;
-                console.log(`🔊 Audio → Session ${session.sessionId} (User: ${session.userId}):`, {
-                  mimeType: part.inlineData.mimeType,
-                  dataLength: part.inlineData.data?.length || 0
-                });
                 
                 ws.send(JSON.stringify({
                   type: 'audio_response',
@@ -291,6 +305,7 @@ class WebSocketLiveController {
         console.error(`❌ No audio data - Session: ${session.sessionId}`);
         return;
       }
+      
       await liveService.sendRealtimeInput(data.audio);
     } catch (error) {
       console.error(`❌ Error sending audio - Session: ${session.sessionId}:`, error.message);
@@ -379,7 +394,7 @@ class WebSocketLiveController {
     });
     
     if (session.liveService) {
-      session.liveService.disconnect();
+      session.liveService.close();
     }
     
     this.activeSessions.delete(sessionId);
