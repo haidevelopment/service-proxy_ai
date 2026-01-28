@@ -30,8 +30,8 @@ async function isIpWhitelistedInDb(ip) {
   }
 
   const rows = await execQuery(
-    'SELECT * FROM setting WHERE type = ? AND `value` = ?',
-    [appConfig.settingType.WHITELIST_IP, normalizedIp]
+    'SELECT * FROM setting WHERE `group` = ? AND `value` = ?',
+    [appConfig.settingGroup.WHITELIST_IP, normalizedIp]
   );
   const rowCount = Array.isArray(rows) ? rows.length : 0;
   console.log('[SPEECH-AI] DB whitelist check result:', { ip: normalizedIp, rowCount });
@@ -184,9 +184,9 @@ function buildTextPayload(audioType, appKey, secretKey, requestParams) {
 
 async function getSpeechSettingsFromDb() {
   const rows = await execQuery(
-    'SELECT * FROM setting WHERE type = ? AND `key` IN (?, ?, ?)',
+    'SELECT * FROM setting WHERE `group` = ? AND `key` IN (?, ?, ?)',
     [
-      appConfig.settingType.SPEECH_AI,
+      appConfig.settingGroup.SPEECH,
       appConfig.speech.settingKeys.URL,
       appConfig.speech.settingKeys.APP_KEY,
       appConfig.speech.settingKeys.SECRET_KEY,

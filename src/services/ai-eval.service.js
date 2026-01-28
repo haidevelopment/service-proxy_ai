@@ -31,8 +31,8 @@ async function isIpWhitelistedInDb(ip) {
   }
 
   const rows = await execQuery(
-    'SELECT * FROM setting WHERE type = ? AND `value` = ?',
-    [appConfig.settingType.WHITELIST_IP, normalizedIp]
+    'SELECT * FROM setting WHERE `group` = ? AND `value` = ?',
+    [appConfig.settingGroup.WHITELIST_IP, normalizedIp]
   );
   const rowCount = Array.isArray(rows) ? rows.length : 0;
   console.log('[AI-EVAL] DB whitelist check result:', { ip: normalizedIp, rowCount });
@@ -45,8 +45,8 @@ async function getPromptByKey(key) {
   }
 
   const rows = await execQuery(
-    'SELECT * FROM setting WHERE type = ? AND `key` = ? AND status = ?',
-    [appConfig.settingType.OPEN_AI_PROMPT, key, appConfig.status.ACTIVE]
+    'SELECT * FROM setting WHERE `group` = ? AND `key` = ? AND status = ?',
+    [appConfig.settingGroup.OPEN_AI_PROMPT, key, appConfig.status.ACTIVE]
   );
 
   const rowCount = Array.isArray(rows) ? rows.length : 0;

@@ -7,10 +7,11 @@ export const appConfig = {
     password: process.env.DB_PASSWORD || '',
     database: process.env.DB_NAME || 'partner',
   },
-  settingType: {
-    OPEN_AI_PROMPT: Number(process.env.OPEN_AI_PROMPT_SETTING_TYPE || '10'),
-    WHITELIST_IP: Number(process.env.WHITELIST_IP_SETTING_TYPE || '8'),
-    SPEECH_AI: Number(process.env.SPEECH_AI_SETTING_TYPE || '7'),
+  settingGroup: {
+    OPEN_AI_PROMPT: process.env.OPEN_AI_PROMPT_SETTING_GROUP || 'prompt',
+    WHITELIST_IP: process.env.WHITELIST_IP_SETTING_GROUP || 'whiteIP',
+    GEMINI: process.env.GEMINI_SETTING_GROUP || 'gemini',
+    SPEECH: process.env.SPEECH_SETTING_GROUP || 'speech',
   },
   status: {
     ACTIVE: 1,
@@ -30,6 +31,11 @@ export const appConfig = {
     },
     CONV: {
       HTML_TO_JSON: 'conv_html_to_json',
+    },
+  },
+  gemini: {
+    settingKeys: {
+      API_KEY: 'GEMINI_API_KEY',
     },
   },
   speech: {

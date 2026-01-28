@@ -27,14 +27,35 @@ function normalizeIp(ip) {
   return ip;
 }
 
+function stripHtml(input) {
+  if (!input || typeof input !== 'string') return '';
+  return input.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function parseWhitelistIps(rawValue) {
+  const text = stripHtml(rawValue);
+  if (!text) return [];
+
+  // Support formats:
+  // - single IP per row
+  // - comma/newline separated
+  // - values wrapped in <p>...</p>
+  return text
+    .split(/[\s,;]+/)
+    .map((v) => v.trim())
+    .filter(Boolean);
+}
+
 async function fetchWhitelistFromDb() {
-  const rows = await execQuery('SELECT `value` FROM setting WHERE type = ?', [appConfig.settingType.WHITELIST_IP]);
+  const rows = await execQuery('SELECT `value` FROM setting WHERE `group` = ?', [appConfig.settingGroup.WHITELIST_IP]);
   const ips = new Set();
   if (Array.isArray(rows)) {
     for (const row of rows) {
       const value = row.value || row['value'];
       if (value && typeof value === 'string') {
-        ips.add(value.trim());
+        for (const ip of parseWhitelistIps(value)) {
+          ips.add(normalizeIp(ip));
+        }
       }
     }
   }
@@ -42,7 +63,7 @@ async function fetchWhitelistFromDb() {
   whitelistCache.ips = ips;
   whitelistCache.fetchedAt = Date.now();
   console.log('[SECURITY] Loaded whitelist IPs from DB:', {
-    type: appConfig.settingType.WHITELIST_IP,
+    group: appConfig.settingGroup.WHITELIST_IP,
     count: whitelistCache.ips.size,
     fetchedAt: new Date(whitelistCache.fetchedAt).toISOString(),
   });
@@ -119,7 +140,7 @@ export async function isIPWhitelisted(ip) {
   if (whitelistCache.ips.size === 0) {
     console.warn('[SECURITY] Whitelist IP cache is empty - denying request by default', {
       ip: normalizedIP,
-      type: appConfig.settingType.WHITELIST_IP,
+      group: appConfig.settingGroup.WHITELIST_IP,
     });
     return false;
   }
@@ -248,7 +269,7 @@ export function validateSecurityConfig() {
 
   console.log(`🔒 Security Configuration:`);
   console.log(`   - API Key: ${API_KEY.substring(0, 8)}...`);
-  console.log(`   - Whitelist Source: MySQL setting (db=${appConfig.db.database}, type=${appConfig.settingType.WHITELIST_IP})`);
+  console.log(`   - Whitelist Source: MySQL setting (db=${appConfig.db.database}, group=${appConfig.settingGroup.WHITELIST_IP})`);
   console.log(`   - Whitelist Cache TTL: ${WHITELIST_CACHE_TTL_MS}ms`);
 
   // Warm up cache (non-blocking)
