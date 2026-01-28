@@ -3,8 +3,73 @@
  * Handles IP whitelist and API key authentication
  */
 
-const WHITELIST_IPS = process.env.WHITELIST_IPS?.split(',').map(ip => ip.trim()).filter(Boolean) || [];
+import { appConfig } from '../config/app.config.js';
+import { execQuery } from '../database/db-connection.js';
+
 const API_KEY = process.env.API_KEY;
+
+const WHITELIST_CACHE_TTL_MS = Number(process.env.WHITELIST_CACHE_TTL_MS || '60000');
+
+const whitelistCache = {
+  ips: new Set(),
+  fetchedAt: 0,
+  fetchingPromise: null,
+};
+
+function normalizeIp(ip) {
+  if (!ip) return ip;
+  if (ip === '::1' || ip === '::ffff:127.0.0.1') {
+    return '127.0.0.1';
+  }
+  if (ip.startsWith('::ffff:')) {
+    return ip.replace('::ffff:', '');
+  }
+  return ip;
+}
+
+async function fetchWhitelistFromDb() {
+  const rows = await execQuery('SELECT `value` FROM setting WHERE type = ?', [appConfig.settingType.WHITELIST_IP]);
+  const ips = new Set();
+  if (Array.isArray(rows)) {
+    for (const row of rows) {
+      const value = row.value || row['value'];
+      if (value && typeof value === 'string') {
+        ips.add(value.trim());
+      }
+    }
+  }
+
+  whitelistCache.ips = ips;
+  whitelistCache.fetchedAt = Date.now();
+  console.log('[SECURITY] Loaded whitelist IPs from DB:', {
+    type: appConfig.settingType.WHITELIST_IP,
+    count: whitelistCache.ips.size,
+    fetchedAt: new Date(whitelistCache.fetchedAt).toISOString(),
+  });
+}
+
+async function ensureWhitelistFresh() {
+  const now = Date.now();
+  const isExpired = !whitelistCache.fetchedAt || now - whitelistCache.fetchedAt > WHITELIST_CACHE_TTL_MS;
+
+  if (!isExpired) {
+    return;
+  }
+
+  if (!whitelistCache.fetchingPromise) {
+    whitelistCache.fetchingPromise = (async () => {
+      try {
+        await fetchWhitelistFromDb();
+      } catch (error) {
+        console.error('[SECURITY] Failed to load whitelist IPs from DB:', error);
+      } finally {
+        whitelistCache.fetchingPromise = null;
+      }
+    })();
+  }
+
+  await whitelistCache.fetchingPromise;
+}
 
 /**
  * Get client IP address from request
@@ -43,13 +108,29 @@ export function getSessionInfo(req) {
 /**
  * Check if IP is in whitelist
  */
-export function isIPWhitelisted(ip) {
-  // Normalize IPv6 localhost to IPv4
-  const normalizedIP = ip === '::1' || ip === '::ffff:127.0.0.1' ? '127.0.0.1' : ip;
-  
-  return WHITELIST_IPS.some(whitelistedIP => {
-    return normalizedIP === whitelistedIP || normalizedIP.startsWith(whitelistedIP);
-  });
+export async function isIPWhitelisted(ip) {
+  await ensureWhitelistFresh();
+
+  const normalizedIP = normalizeIp(ip);
+  if (!normalizedIP) {
+    return false;
+  }
+
+  if (whitelistCache.ips.size === 0) {
+    console.warn('[SECURITY] Whitelist IP cache is empty - denying request by default', {
+      ip: normalizedIP,
+      type: appConfig.settingType.WHITELIST_IP,
+    });
+    return false;
+  }
+
+  for (const whitelistedIP of whitelistCache.ips) {
+    if (normalizedIP === whitelistedIP || normalizedIP.startsWith(whitelistedIP)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 /**
@@ -65,18 +146,29 @@ export function isValidAPIKey(apiKey) {
  */
 export function ipWhitelistMiddleware(req, res, next) {
   const ip = getClientIP(req);
-  
-  if (!isIPWhitelisted(ip)) {
-    console.warn(`🚫 Blocked request from non-whitelisted IP: ${ip}`);
-    return res.status(403).json({
+
+  (async () => {
+    const allowed = await isIPWhitelisted(ip);
+    if (!allowed) {
+      console.warn(`🚫 Blocked request from non-whitelisted IP (DB): ${ip}`);
+      res.status(403).json({
+        success: false,
+        error: 'Forbidden',
+        message: 'Your IP address is not whitelisted',
+        ip: ip,
+      });
+      return;
+    }
+    next();
+  })().catch((error) => {
+    console.error('[SECURITY] ipWhitelistMiddleware error:', error);
+    res.status(500).json({
       success: false,
-      error: 'Forbidden',
-      message: 'Your IP address is not whitelisted',
-      ip: ip
+      error: 'Internal Server Error',
+      message: 'Failed to validate IP whitelist',
+      ip: ip,
     });
-  }
-  
-  next();
+  });
 }
 
 /**
@@ -123,20 +215,26 @@ export function verifyWebSocketClient(info, callback) {
     }
   }
   
-  if (!isIPWhitelisted(ip)) {
-    console.warn(`🚫 Blocked WebSocket from non-whitelisted IP: ${ip}`);
-    callback(false, 403, 'Forbidden: IP not whitelisted');
-    return;
-  }
-  
-  if (!isValidAPIKey(apiKey)) {
-    console.warn(`🚫 Blocked WebSocket with invalid API key from IP: ${ip}`);
-    callback(false, 401, 'Unauthorized: Invalid API key');
-    return;
-  }
-  
-  console.log(`✅ Authorized WebSocket connection from IP: ${ip}`);
-  callback(true);
+  (async () => {
+    const allowed = await isIPWhitelisted(ip);
+    if (!allowed) {
+      console.warn(`🚫 Blocked WebSocket from non-whitelisted IP (DB): ${ip}`);
+      callback(false, 403, 'Forbidden: IP not whitelisted');
+      return;
+    }
+
+    if (!isValidAPIKey(apiKey)) {
+      console.warn(`🚫 Blocked WebSocket with invalid API key from IP: ${ip}`);
+      callback(false, 401, 'Unauthorized: Invalid API key');
+      return;
+    }
+
+    console.log(`✅ Authorized WebSocket connection from IP: ${ip}`);
+    callback(true);
+  })().catch((error) => {
+    console.error('[SECURITY] verifyWebSocketClient error:', error);
+    callback(false, 500, 'Internal Server Error');
+  });
 }
 
 /**
@@ -147,13 +245,12 @@ export function validateSecurityConfig() {
     console.error('❌ API_KEY is required in .env file');
     process.exit(1);
   }
-  
-  if (WHITELIST_IPS.length === 0) {
-    console.error('❌ WHITELIST_IPS is required in .env file (comma-separated list)');
-    process.exit(1);
-  }
-  
+
   console.log(`🔒 Security Configuration:`);
   console.log(`   - API Key: ${API_KEY.substring(0, 8)}...`);
-  console.log(`   - Whitelisted IPs: ${WHITELIST_IPS.join(', ')}`);
+  console.log(`   - Whitelist Source: MySQL setting (db=${appConfig.db.database}, type=${appConfig.settingType.WHITELIST_IP})`);
+  console.log(`   - Whitelist Cache TTL: ${WHITELIST_CACHE_TTL_MS}ms`);
+
+  // Warm up cache (non-blocking)
+  ensureWhitelistFresh().catch((error) => console.error('[SECURITY] Failed to warm whitelist cache:', error));
 }

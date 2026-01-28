@@ -7,6 +7,8 @@ import { verifyWebSocketClient, validateSecurityConfig } from './src/middleware/
 import { setupRoutes } from './src/routes/api.routes.js';
 
 const app = express();
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 const server = createServer(app);
 const wss = new WebSocketServer({ server, verifyClient: verifyWebSocketClient });
 
